@@ -2,6 +2,9 @@ require 'pp'
 require 'cbor-pure'
 require 'cbor-deterministic'
 require 'cbor-canonical'
+require 'cbor-packed'           # for cbor_visit
+
+## -- manipulating hex strings
 
 class String
   def hexi
@@ -14,6 +17,29 @@ class String
     gsub(/\s/, "").chars.each_slice(2).map{ |x| Integer(x.join, 16).chr("BINARY") }.join
   end
 end
+
+## -- DLO check
+
+def dlo?(o)
+  o.cbor_visit do |item|
+    case item
+    when String, Array, Hash
+      return false if item.cbor_stream?
+    end
+    true # continue visiting
+  end
+  true # didn't find any streaming items
+end
+
+fail unless dlo?([1, 2, 3, {a: 1, b: 2}])
+fail unless dlo?(CBOR.decode("80".xeh))
+fail if dlo?(CBOR.decode("9F80FF".xeh))
+fail unless dlo?(CBOR.decode("A18001".xeh))
+fail if dlo?(CBOR.decode("A1BF8001FF60".xeh))
+fail unless dlo?(CBOR.decode("60".xeh))
+fail if dlo?(CBOR.decode("817F6130623232FF".xeh))
+
+## -- random arguments
 
 def nrand(n, max, mixin = [])
   ((0...n).map {
@@ -31,10 +57,12 @@ def boundary(first, *more)
   }
 end
 
+## -- Integers
+
 arguments = nrand(20, 64, boundary(24, 1, 2, 4, 8))
 
 unsigned = arguments.map {|a|
-  {cbor_hex: a.to_cbor.hexs, value: a, ic: []}
+  {cbor_hex: a.to_cbor.hexs, value: a, ic: Set[]}
 }
 
 negative = arguments.map {|a|
@@ -52,15 +80,44 @@ def check_int(c)
   c[:ic] << :LDE if c[:value].to_canonical_cbor == cb
 end
 
-unsigned.each do |c|
-  check_int(c)
+def widen_int(c)
+pp c
+  cb = c[:cbor_hex].xeh
+  ib = cb.getbyte(0)
+  arg = c[:cbor_hex][2..]
+  mt = ib >> 5
+  if mt < 2
+    case ib & 0x1f
+    in 0..0x17
+      [{cbor_hex: "18" + arg, value: c[:value], ic: []}]
+    in 0x18
+      [{cbor_hex: "1900" + arg, value: c[:value], ic: []}]
+    in 0x19
+      [{cbor_hex: "1a000000" + arg, value: c[:value], ic: []}]
+    in 0x1a
+      [{cbor_hex: "1b0000000000000000000000" + arg, value: c[:value], ic: []}]
+    in 0x1b
+      []                        # do the C2/C3
+    end
+  else
+    []
+  end
 end
 
-negative.each do |c|
-  check_int(c)
+loop do
+  add = []
+  unsigned.each do |c|
+    check_int(c)
+    add.concat widen_int(c)
+  end
+  break if add == []
 end
 
+    negative.each do |c|
+      check_int(c)
+    end
 
-pp unsigned
 
-pp negative
+    pp unsigned
+
+    pp negative
