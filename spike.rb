@@ -16,6 +16,19 @@ class String
   def xeh
     gsub(/\s/, "").chars.each_slice(2).map{ |x| Integer(x.join, 16).chr("BINARY") }.join
   end
+  def vlb
+    n = 0
+    each_byte { |b| n <<= 8; n += b}
+    n
+  end
+end
+class Integer
+  def to_bytes
+    digits(256).reverse!.pack("C*")
+  end
+  def to_bytes0
+    digits(256).reverse!.drop_while{|dig| dig == 0}.pack("C*")
+  end
 end
 
 ## -- DLO check
@@ -61,61 +74,84 @@ end
 
 arguments = nrand(20, 64, boundary(24, 1, 2, 4, 8))
 
-unsigned = arguments.map {|a|
-  {cbor_hex: a.to_cbor.hexs, value: a, ic: Set[]}
-}
+unsigned = Hash[arguments.map {|a|
+                  [a.to_cbor.hexs, {value: a, ic: Set[]}]
+                }]
 
-negative = arguments.map {|a|
-  val = ~a
-  {cbor_hex: val.to_cbor.hexs, value: val, ic: []}
-}
+negative = Hash[arguments.map {|a|
+                  val = ~a
+                  [val.to_cbor.hexs, {value: val, ic: Set[]}]
+                }]
 
-def check_int(c)
-  cb = c[:cbor_hex].xeh
+def check_int(hexenc, attr)
+  cb = hexenc.xeh
   cd = CBOR.decode(cb)
-  fail c.inspect if cd != c[:value]
-  c[:ic] << :DLO if c[:value].to_cbor == cb # default is definite length
-  c[:ic] << :PS if c[:value].to_cbor == cb
-  c[:ic] << :CDE if c[:value].to_deterministic_cbor == cb
-  c[:ic] << :LDE if c[:value].to_canonical_cbor == cb
+  val = attr[:value]
+  fail [hexenc, attr].inspect if cd != attr[:value]
+  attr[:ic] << :DLO if dlo?(val)
+  attr[:ic] << :PS if val.to_cbor == cb
+  attr[:ic] << :CDE if val.to_deterministic_cbor == cb
+  attr[:ic] << :LDE if val.to_canonical_cbor == cb
 end
 
-def widen_int(c)
-pp c
-  cb = c[:cbor_hex].xeh
+def widen_int(hexenc, attr)
+#pp [hexenc, attr]
+  cb = hexenc.xeh
   ib = cb.getbyte(0)
-  arg = c[:cbor_hex][2..]
+  arg = "%02x" % (ib & 0x1f) if (arg = hexenc[2..]) == "" # immediate value XXX negative
+  attr_out = attr.merge({ic: Set[]})
   mt = ib >> 5
   if mt < 2
+    initial_nibble = "13"[mt]
     case ib & 0x1f
     in 0..0x17
-      [{cbor_hex: "18" + arg, value: c[:value], ic: []}]
+      [initial_nibble + "8" + arg, attr_out]
     in 0x18
-      [{cbor_hex: "1900" + arg, value: c[:value], ic: []}]
+      [initial_nibble + "900" + arg, attr_out]
     in 0x19
-      [{cbor_hex: "1a000000" + arg, value: c[:value], ic: []}]
+      [initial_nibble + "a0000" + arg, attr_out]
     in 0x1a
-      [{cbor_hex: "1b0000000000000000000000" + arg, value: c[:value], ic: []}]
+      [initial_nibble + "b00000000" + arg, attr_out]
     in 0x1b
-      []                        # do the C2/C3
+      val = attr[:value]
+      if mt == 1
+        val = ~val
+      end
+      [(0xc2+mt).to_s(16) + (val.to_bytes0).to_cbor.hexi, attr_out]
     end
-  else
-    []
+  elsif mt == 6
+    content = CBOR.decode(arg.xeh)
+    if content[0..3] != "\x00\x00\x00\x00".b
+      content = "\x00".b + content
+      [hexenc[0..1] + content.to_cbor.hexi, attr_out]
+    end
+  else fail [:WI, hexenc, attr].inspect
   end
 end
 
-loop do
-  add = []
-  unsigned.each do |c|
-    check_int(c)
-    add.concat widen_int(c)
+[unsigned, negative].each do |cases|
+#  pp [:CASES, cases]
+  loop do
+    add = Hash[
+    cases.map do |c|
+      check_int(*c)
+      # add.concat
+      w = widen_int(*c)
+      if w != nil
+        check_int(*w)
+        w
+      end
+    end.compact].reject {|k, _| cases.key?(k)}
+#    pp [:ADD, add]
+    break if add == {}
+    cases.merge! add
   end
-  break if add == []
 end
 
-    negative.each do |c|
-      check_int(c)
-    end
+pp unsigned
+
+pp negative
+
 
 
     pp unsigned
