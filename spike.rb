@@ -52,6 +52,8 @@ fail if dlo?(CBOR.decode("A1BF8001FF60".xeh))
 fail unless dlo?(CBOR.decode("60".xeh))
 fail if dlo?(CBOR.decode("817F6130623232FF".xeh))
 
+=begin
+
 ## -- random arguments
 
 def nrand(n, max, mixin = [])
@@ -152,8 +154,71 @@ pp unsigned
 
 pp negative
 
+=end
+
+## -- Floats
 
 
-    pp unsigned
+def check_int(hexenc, attr)
+  cb = hexenc.xeh
+  cd = CBOR.decode(cb)
+  val = attr[:value]
+  fail [hexenc, attr].inspect if cd != attr[:value] && cd == cd # not a NaN...
+  if attr[:ic] != Set[]
+    fail [hexenc, attr].inspect
+  end
+  attr[:ic] << :DLO if dlo?(val)
+  attr[:ic] << :PS if val.to_cbor == cb # XXX
+  attr[:ic] << :CDE if val.to_deterministic_cbor == cb
+  attr[:ic] << :LDE if val.to_canonical_cbor == cb
+end
 
-    pp negative
+def analyze_f64(f64)
+  [f64 >> 63, (f64 >> 52) & ((1<<11)-1), f64 & ((1<<52)-1) ]
+end
+def construct_f64(sign, exp, mant)
+  sign << 63 | exp << 52 | mant
+end
+
+binary64 = Hash[(0...100).map {
+                  ran1 = Random.rand(2**64)
+                  sign, exp, mant = analyze_f64(ran1)
+                  ran0 = ((exp & 1) * 2) - 1 # exponent sign
+                  ran1 = (exp & 0xF0) != 0       # 6 % non-finites
+                  exp = ran1 ? Integer(2**Random.rand(0.0...10.0)*ran0 + 1023) : 2047
+                  ran2 = construct_f64(sign, exp, mant)
+                  ["fb" + (bin = [ran2].pack("Q>")).hexi,
+                   {value: bin.unpack("G").first, ic: Set[]}] 
+                  }]
+
+[0.0, -0.0, Float::INFINITY, -Float::INFINITY, Float::NAN].each do |val|
+  binary64[val.to_cbor.hexi] = {value: val, ic: Set[]} # needed?
+  # Add non-PS 64-bit forms
+  bits64 = [val].pack("G")
+  binary64["fb" + bits64.hexi] = {value: val, ic: Set[]}
+  bits64.setbyte(2, 1)            # poison for f16; does not work for 0.0
+  mybits = bits64.unpack("G").first.to_cbor
+  mybits.setbyte(3, 0)
+  case mybits.getbyte(0)
+  in 0xfa
+    binary64[mybits.hexi] = {value: val, ic: Set[]}
+  in 0xfb                       # 0.0/-0.0
+    binary64["fa%02x000000" % mybits.getbyte(1)] = {value: val, ic: Set[]}
+  end
+end
+
+floats = Hash[[23, 10].flat_map do |expobits|
+  binary64.flat_map {|hexenc, attr|
+         enc = [CBOR.decode(hexenc.xeh)].pack("G").unpack("Q>").first
+         enc &= -(2**(52-expobits))
+         enc = "\xFB".b + [enc].pack("Q>")
+         val = CBOR.decode(enc)
+         enc_short = val.to_cbor
+         [[enc_short.hexi, {value: val, ic: Set[]}], [enc.hexi, {value: val, ic: Set[]}]]
+       }
+end]
+
+floats.merge!(binary64)
+floats.each { |k, v| check_int(k, v)}
+
+pp floats.sort
