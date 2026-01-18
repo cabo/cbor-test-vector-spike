@@ -224,6 +224,56 @@ primitive = unsigned.merge(negative, simples, floats) # .sort
 
 # pp primitive
 
+## -- Strings
+
+def gen_word
+  @words ||= (File.readlines("/usr/share/dict/words", chomp: true).shuffle rescue %w{tic tac toe})
+  @wordptr ||= 0
+  @wordptr = 0 if @wordptr == @words.size
+  w = @words[@wordptr]
+  @wordptr += 1
+  w
+end
+
+bytes_lengths = nrand(15, 5, nrand(10, 9, [0, 1, 2, 23, 24, 255, 256, 257]))
+# pp bytes_lengths
+# pp bytes_lengths.sample
+
+def gen_bytes(bl)
+  l = bl.sample
+  (0...l/8+1).map { [Random.rand(2**64)].pack("Q>") }.join[0...l]
+end
+
+def gen_words(bl)
+  l = bl.sample
+  w = gen_word
+  while w.length < l
+    w << "-" << gen_word
+  end
+  w[0...l]
+end
+
+# 5.times do
+#   pp gen_bytes(bytes_lengths)
+#   pp gen_word
+# end
+
+strings = Hash[[2, 3].flat_map do |mt|
+                 (0...100).flat_map {
+                   val = if mt == 2
+                           gen_bytes(bytes_lengths)
+                         else
+                           gen_words(bytes_lengths)
+                         end
+                   enc_short = val.to_cbor
+                   [[enc_short.hexi, {value: val, ic: Set[]}]] # Add indef; add non-PS
+       }
+end]
+
+strings.each { |k, v| set_flags(k, v)}
+
+to_out = primitive.merge(strings).sort
+
 MY_CSV_OPTIONS = {
   col_sep:            ";",
   quote_char:         '|',
