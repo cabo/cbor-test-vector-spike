@@ -163,6 +163,29 @@ def check_int(hexenc, attr)
   attr[:ic] << :LDE if val.to_canonical_cbor == cb
 end
 
+## -- Tags
+
+## -- Simples
+
+arguments = nrand(10, 8, [20, 21, 22, 23, 32, 33, 255]).select {(0..23) === _1 || (32..255) === _1}
+
+simple_lit = {20 => false, 21 => true, 22 => nil}
+
+simples = Hash[arguments.map {|arg|
+                 val = if simple_lit.key? arg
+                         simple_lit[arg]
+                       else
+                         CBOR::Simple.new(arg)
+                       end
+                 [val.to_cbor.hexi, {value: val, ic: Set[]}]
+              }]
+
+simples.each { |k, v| check_int(k, v)}
+
+# pp simples
+
+## -- Floats
+
 def analyze_f64(f64)
   [f64 >> 63, (f64 >> 52) & ((1<<11)-1), f64 & ((1<<52)-1) ]
 end
