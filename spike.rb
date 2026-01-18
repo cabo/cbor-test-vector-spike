@@ -3,6 +3,8 @@ require 'cbor-pure'
 require 'cbor-deterministic'
 require 'cbor-canonical'
 require 'cbor-packed'           # for cbor_visit
+require 'csv'
+require 'edn-abnf'
 
 ## -- manipulating hex strings
 
@@ -52,8 +54,6 @@ fail if dlo?(CBOR.decode("A1BF8001FF60".xeh))
 fail unless dlo?(CBOR.decode("60".xeh))
 fail if dlo?(CBOR.decode("817F6130623232FF".xeh))
 
-=begin
-
 ## -- random arguments
 
 def nrand(n, max, mixin = [])
@@ -71,6 +71,7 @@ def boundary(first, *more)
     [v-1, v, v+1]
   }
 end
+
 
 ## -- Integers
 
@@ -150,13 +151,10 @@ end
   end
 end
 
-pp unsigned
+# pp unsigned
 
-pp negative
+# pp negative
 
-=end
-
-## -- Floats
 
 
 def check_int(hexenc, attr)
@@ -221,4 +219,15 @@ end]
 floats.merge!(binary64)
 floats.each { |k, v| check_int(k, v)}
 
-pp floats.sort
+primitive = unsigned.merge(negative, simples, floats).sort
+
+# pp primitive
+
+headers = ["CBOR", "value", "attributes"]
+output = CSV.generate('', headers: headers, write_headers: true) do |csv|
+  primitive.each do |k, v|
+    csv << [k, v[:value].cbor_diagnostic, v[:ic].join("/")]
+  end
+end
+
+puts output
