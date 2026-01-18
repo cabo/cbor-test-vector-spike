@@ -12,16 +12,8 @@ class String
   def hexi
     bytes.map{|x| "%02x" % x}.join
   end
-  def hexs
-    bytes.map{|x| "%02x" % x}.join(" ")
-  end
   def xeh
     gsub(/\s/, "").chars.each_slice(2).map{ |x| Integer(x.join, 16).chr("BINARY") }.join
-  end
-  def vlb
-    n = 0
-    each_byte { |b| n <<= 8; n += b}
-    n
   end
 end
 class Integer
@@ -78,12 +70,12 @@ end
 arguments = nrand(20, 64, boundary(24, 1, 2, 4, 8))
 
 unsigned = Hash[arguments.map {|a|
-                  [a.to_cbor.hexs, {value: a, ic: Set[]}]
+                  [a.to_cbor.hexi, {value: a, ic: Set[]}]
                 }]
 
 negative = Hash[arguments.map {|a|
                   val = ~a
-                  [val.to_cbor.hexs, {value: val, ic: Set[]}]
+                  [val.to_cbor.hexi, {value: val, ic: Set[]}]
                 }]
 
 def check_int(hexenc, attr)
@@ -189,7 +181,7 @@ binary64 = Hash[(0...100).map {
                    {value: bin.unpack("G").first, ic: Set[]}] 
                   }]
 
-[0.0, -0.0, Float::INFINITY, -Float::INFINITY, Float::NAN].each do |val|
+[0.0, -0.0, Float::INFINITY, -Float::INFINITY, Float::NAN, -Float::NAN].each do |val|
   binary64[val.to_cbor.hexi] = {value: val, ic: Set[]} # needed?
   # Add non-PS 64-bit forms
   bits64 = [val].pack("G")
