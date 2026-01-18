@@ -46,6 +46,19 @@ fail if dlo?(CBOR.decode("A1BF8001FF60".xeh))
 fail unless dlo?(CBOR.decode("60".xeh))
 fail if dlo?(CBOR.decode("817F6130623232FF".xeh))
 
+
+def set_flags(hexenc, attr)
+  cb = hexenc.xeh
+  cd = CBOR.decode(cb)
+  val = attr[:value]
+  fail [hexenc, attr].inspect if cd != attr[:value] && cd == cd # not a NaN...
+  attr[:ic] = Set[]
+  attr[:ic] << :DLO if dlo?(val)
+  attr[:ic] << :PS if val.to_cbor == cb # XXX
+  attr[:ic] << :CDE if val.to_deterministic_cbor == cb
+  attr[:ic] << :LDE if val.to_canonical_cbor == cb
+end
+
 ## -- random arguments
 
 def nrand(n, max, mixin = [])
@@ -77,17 +90,6 @@ negative = Hash[arguments.map {|a|
                   val = ~a
                   [val.to_cbor.hexi, {value: val, ic: Set[]}]
                 }]
-
-def check_int(hexenc, attr)
-  cb = hexenc.xeh
-  cd = CBOR.decode(cb)
-  val = attr[:value]
-  fail [hexenc, attr].inspect if cd != attr[:value]
-  attr[:ic] << :DLO if dlo?(val)
-  attr[:ic] << :PS if val.to_cbor == cb
-  attr[:ic] << :CDE if val.to_deterministic_cbor == cb
-  attr[:ic] << :LDE if val.to_canonical_cbor == cb
-end
 
 def widen_int(hexenc, attr)
 #pp [hexenc, attr]
@@ -129,11 +131,11 @@ end
   loop do
     add = Hash[
     cases.map do |c|
-      check_int(*c)
+      set_flags(*c)
       # add.concat
       w = widen_int(*c)
       if w != nil
-        check_int(*w)
+        set_flags(*w)
         w
       end
     end.compact].reject {|k, _| cases.key?(k)}
@@ -146,22 +148,6 @@ end
 # pp unsigned
 
 # pp negative
-
-
-
-def check_int(hexenc, attr)
-  cb = hexenc.xeh
-  cd = CBOR.decode(cb)
-  val = attr[:value]
-  fail [hexenc, attr].inspect if cd != attr[:value] && cd == cd # not a NaN...
-  if attr[:ic] != Set[]
-    fail [hexenc, attr].inspect
-  end
-  attr[:ic] << :DLO if dlo?(val)
-  attr[:ic] << :PS if val.to_cbor == cb # XXX
-  attr[:ic] << :CDE if val.to_deterministic_cbor == cb
-  attr[:ic] << :LDE if val.to_canonical_cbor == cb
-end
 
 ## -- Tags
 
@@ -180,7 +166,7 @@ simples = Hash[arguments.map {|arg|
                  [val.to_cbor.hexi, {value: val, ic: Set[]}]
               }]
 
-simples.each { |k, v| check_int(k, v)}
+simples.each { |k, v| set_flags(k, v)}
 
 # pp simples
 
@@ -232,9 +218,9 @@ floats = Hash[[23, 10].flat_map do |expobits|
 end]
 
 floats.merge!(binary64)
-floats.each { |k, v| check_int(k, v)}
+floats.each { |k, v| set_flags(k, v)}
 
-primitive = unsigned.merge(negative, simples, floats).sort
+primitive = unsigned.merge(negative, simples, floats) # .sort
 
 # pp primitive
 
