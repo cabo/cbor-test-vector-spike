@@ -224,9 +224,14 @@ primitive = unsigned.merge(negative, simples, floats) # .sort
 
 # pp primitive
 
+MY_CSV_OPTIONS = {
+  col_sep:            ";",
+  quote_char:         '|',
+}
+
 headers = ["CBOR", "value", "attributes"]
-output = CSV.generate('', headers: headers, write_headers: true) do |csv|
-  primitive.each do |k, v|
+output = CSV.generate('', headers: headers, write_headers: true, **MY_CSV_OPTIONS) do |csv|
+  to_out.each do |k, v|
     csv << [k, v[:value].cbor_diagnostic, v[:ic].join("/")]
   end
 end
