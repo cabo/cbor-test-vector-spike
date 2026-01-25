@@ -134,6 +134,31 @@ negative = Hash[arguments.map {|a|
                   [val.to_cbor.hexi, {value: val, ic: Set[]}]
                 }]
 
+def widen_arg(hexenc, pos = 0)
+  h = hexenc.dup
+  hpos = 2*pos
+  cb = h.xeh
+  ib = cb.getbyte(pos)
+  arg = "%02x" % (ib & 0x1f) if (arg = hexenc[2..]) == "" # immediate value XXX negative
+  mt = ib >> 5
+  initial_nibble = ("1".ord + 2*mt).chr
+  case ib & 0x1f
+  in 0..0x17
+    h[hpos, 2] = initial_nibble + "8" + arg
+  in 0x18
+    h[hpos, 4] = initial_nibble + "900" + arg
+  in 0x19
+    h[hpos, 6] = initial_nibble + "a0000" + arg
+  in 0x1a
+    h[hpos, 10] = initial_nibble + "b00000000" + arg
+  in 0x1b
+    rep = yield cb, pos, ib, mt
+    return nil unless rep
+    h[hpos, 18] = rep
+  end
+  h
+end
+
 def widen_int(hexenc, attr)
 #pp [hexenc, attr]
   cb = hexenc.xeh
@@ -142,23 +167,11 @@ def widen_int(hexenc, attr)
   attr_out = attr.merge({ic: Set[]})
   mt = ib >> 5
   if mt < 2
-    initial_nibble = "13"[mt]
-    case ib & 0x1f
-    in 0..0x17
-      [initial_nibble + "8" + arg, attr_out]
-    in 0x18
-      [initial_nibble + "900" + arg, attr_out]
-    in 0x19
-      [initial_nibble + "a0000" + arg, attr_out]
-    in 0x1a
-      [initial_nibble + "b00000000" + arg, attr_out]
-    in 0x1b
-      val = attr[:value]
-      if mt == 1
-        val = ~val
-      end
-      [(0xc2+mt).to_s(16) + (val.to_bytes0).to_cbor.hexi, attr_out]
+    w = widen_arg(hexenc) do
+      val = attr[:value] ^ -mt
+      (0xc2+mt).to_s(16) + (val.to_bytes0).to_cbor.hexi
     end
+    [w, attr_out]
   elsif mt == 6
     content = CBOR.decode(arg.xeh)
     if content[0..3] != "\x00\x00\x00\x00".b
