@@ -59,6 +59,49 @@ def set_flags(hexenc, attr)
   attr[:ic] << :LDE if val.to_canonical_cbor == cb
 end
 
+## -- CLI arg processing
+
+
+Encoding.default_external = Encoding::UTF_8
+require 'optparse'
+require 'ostruct'
+
+$error = 0
+
+output_formats = [:csv, :"test-vector"]
+
+$options = OpenStruct.new
+# $options.seed = 4711 # could set a default seed this way
+$options.target = output_formats[0]
+
+begin
+  op = OptionParser.new do |opts|
+    opts.banner = "Usage: $0 [options]"
+
+    opts.on("-v", "--[no-]verbose", "Run verbosely") do |v|
+      $options.verbose = v
+    end
+    opts.on("-sSEED", "--seed=SEED", Integer,
+            "Random number generator seed") do |v|
+      $options.seed = v
+    end
+    opts.on("-tFMT", "--to=FMT", output_formats,
+            "Target format (#{output_formats.join("/")}, default: csv)") do |v|
+      $options.target = v.to_sym
+    end
+  end
+  op.parse!
+rescue Exception => e
+  warn e
+  warn op
+  exit 1
+end
+
+if $options.seed
+  Random.srand($options.seed)
+end
+seed = Random.seed
+
 ## -- random arguments
 
 def nrand(n, max, mixin = [])
@@ -187,7 +230,7 @@ binary64 = Hash[(0...100).map {
                   exp = ran1 ? Integer(2**Random.rand(0.0...10.0)*ran0 + 1023) : 2047
                   ran2 = construct_f64(sign, exp, mant)
                   ["fb" + (bin = [ran2].pack("Q>")).hexi,
-                   {value: bin.unpack("G").first, ic: Set[]}] 
+                   {value: bin.unpack("G").first, ic: Set[]}]
                   }]
 
 [0.0, -0.0, Float::INFINITY, -Float::INFINITY, Float::NAN, -Float::NAN].each do |val|
@@ -274,16 +317,23 @@ strings.each { |k, v| set_flags(k, v)}
 
 to_out = primitive.merge(strings).sort
 
-MY_CSV_OPTIONS = {
-  col_sep:            ";",
-  quote_char:         '|',
-}
+case $options.target
+in :csv
 
-headers = ["CBOR", "value", "attributes"]
-output = CSV.generate('', headers: headers, write_headers: true, **MY_CSV_OPTIONS) do |csv|
-  to_out.each do |k, v|
-    csv << [k, v[:value].cbor_diagnostic, v[:ic].join("/")]
+  MY_CSV_OPTIONS = {
+    col_sep:            ";",
+    quote_char:         '|',
+  }
+
+  headers = ["CBOR", "value", "attributes"]
+  output = CSV.generate('', headers: headers, write_headers: true, **MY_CSV_OPTIONS) do |csv|
+    to_out.each do |k, v|
+      csv << [k, v[:value].cbor_diagnostic, v[:ic].join("/")]
+    end
   end
-end
 
-puts output
+  puts output
+
+in :"test-vector"
+  fail "Not yet implemented"
+end
