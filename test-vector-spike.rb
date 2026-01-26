@@ -53,11 +53,14 @@ def set_flags(hexenc, attr)
   val = attr[:value]
   fail [hexenc, attr].inspect if cd != attr[:value] && cd == cd # not a NaN...
   attr[:ic] = Set[]
-  attr[:ic] << :DLO if dlo?(val)
+  attr[:ic] << :DLO if dlo?(cd)
   attr[:ic] << :PS if val.to_cbor == cb # XXX
   attr[:ic] << :CDE if val.to_deterministic_cbor == cb
   attr[:ic] << :LDE if val.to_canonical_cbor == cb
 end
+
+# indexed by initial byte
+ARG_LENGTH = ([0]*24 + [1, 2, 4, 8] + [false]*3 + [true]) * 8
 
 ## -- CLI arg processing
 
@@ -139,20 +142,26 @@ def widen_arg(hexenc, pos = 0)
   hpos = 2*pos
   cb = h.xeh
   ib = cb.getbyte(pos)
-  arg = "%02x" % (ib & 0x1f) if (arg = hexenc[2..]) == "" # immediate value XXX negative
+  arg_length = ARG_LENGTH[ib]
+  return nil if arg_length == true # XXX should widen inside
+  arg = if arg_length == 0
+          "%02x" % (ib & 0x1f)
+        else
+          hexenc[hpos + 2, arg_length * 2]
+        end
   mt = ib >> 5
   initial_nibble = ("1".ord + 2*mt).chr
-  case ib & 0x1f
-  in 0..0x17
+  case arg_length
+  in 0
     h[hpos, 2] = initial_nibble + "8" + arg
-  in 0x18
+  in 1
     h[hpos, 4] = initial_nibble + "900" + arg
-  in 0x19
+  in 2
     h[hpos, 6] = initial_nibble + "a0000" + arg
-  in 0x1a
+  in 4
     h[hpos, 10] = initial_nibble + "b00000000" + arg
-  in 0x1b
-    rep = yield cb, pos, ib, mt
+  in 8
+    rep = yield cb, pos, ib, mt, h
     return nil unless rep
     h[hpos, 18] = rep
   end
@@ -160,7 +169,6 @@ def widen_arg(hexenc, pos = 0)
 end
 
 def widen_int(hexenc, attr)
-#pp [hexenc, attr]
   cb = hexenc.xeh
   ib = cb.getbyte(0)
   arg = "%02x" % (ib & 0x1f) if (arg = hexenc[2..]) == "" # immediate value XXX negative
@@ -326,7 +334,37 @@ strings = Hash[[2, 3].flat_map do |mt|
        }
 end]
 
-strings.each { |k, v| set_flags(k, v)}
+#warn [:strings, strings.size].inspect
+indef_stringvals = Set[]        # only do one indef per val
+
+loop do
+  add = Hash[
+    strings.map do |hexenc, attr|
+      set_flags(hexenc, attr)
+      # add.concat
+      w = widen_arg(hexenc) do |cb, pos, ib, mt, h|
+        if hexenc.size > 22       # XXX split only once so far
+          val = CBOR.decode(hexenc.xeh)
+          unless indef_stringvals === val
+            indef_stringvals << val
+            s = val.bytesize
+            r = Random.rand(s-2)+1
+            val.cbor_stream!([r, s - r])
+            h.clear               # wholesale replacement
+            val.to_cbor.hexi
+          end
+        end
+      end
+      if w != nil
+        new_c = [w, {value: attr[:value]}]
+        set_flags(*new_c)
+        new_c
+      end
+    end.compact].reject {|k, _| strings.key?(k)}
+#  warn [:add, add.size].inspect
+  break if add == {}
+  strings.merge! add
+end
 
 to_out = primitive.merge(strings).sort
 
@@ -336,6 +374,7 @@ in :csv
   MY_CSV_OPTIONS = {
     col_sep:            ";",
     quote_char:         '|',
+    quote_empty:        false,
   }
 
   headers = ["CBOR", "value", "attributes"]
