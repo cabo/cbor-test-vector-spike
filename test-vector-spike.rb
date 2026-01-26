@@ -343,16 +343,14 @@ loop do
       set_flags(hexenc, attr)
       # add.concat
       w = widen_arg(hexenc) do |cb, pos, ib, mt, h|
-        if hexenc.size > 22       # XXX split only once so far
-          val = CBOR.decode(hexenc.xeh)
-          unless indef_stringvals === val
-            indef_stringvals << val
-            s = val.bytesize
-            r = Random.rand(s-2)+1
-            val.cbor_stream!([r, s - r])
-            h.clear               # wholesale replacement
-            val.to_cbor.hexi
-          end
+        val = CBOR.decode(hexenc.xeh)
+        unless indef_stringvals === val
+          indef_stringvals << val
+          s = val.bytesize
+          r = Random.rand(s+1) # "Zero-length chunks, while not particularly useful, are permitted."
+          val.cbor_stream!([r, s - r])
+          h.clear               # wholesale replacement
+          val.to_cbor.hexi
         end
       end
       if w != nil
