@@ -123,7 +123,7 @@ end
 end
 
 
-def set_flags(hexenc, attr)
+def set_flags(hexenc, attr, description = false)
   cb = hexenc.xeh
   cd = CBOR.decode(cb)
   cdd = cd.to_deterministic_cbor
@@ -137,6 +137,7 @@ def set_flags(hexenc, attr)
   attr[:ic] << :PS if cd.to_cbor == cb
   attr[:ic] << :CDE if vald == cb
   attr[:ic] << :LDE if val.to_canonical_cbor == cb
+  attr[:description] = description if description
 end
 
 # indexed by initial byte
@@ -276,15 +277,15 @@ def widen_int(hexenc, attr)
   end
 end
 
-[unsigned, negative].each do |cases|
+[[unsigned, "unsigned integer"], [negative, "negative integer"]].each do |cases, desc|
   loop do
     add = Hash[
     cases.map do |c|
-      set_flags(*c)
+      set_flags(*c, c[1][:description] || desc)
       # add.concat
       w = widen_int(*c)
       if w != nil
-        set_flags(*w)
+        set_flags(*w, "widened #{desc}")
         w
       end
     end.compact].reject {|k, _| cases.key?(k)}
@@ -314,7 +315,7 @@ simples = Hash[arguments.map {|arg|
                  [val.to_cbor.hexi, {value: val, ic: Set[]}]
               }]
 
-simples.each { |k, v| set_flags(k, v)}
+simples.each { |k, v| set_flags(k, v, "simple")}
 
 # pp simples
 
@@ -366,7 +367,7 @@ floats = Hash[[23, 10].flat_map do |expobits|
 end]
 
 floats.merge!(binary64)
-floats.each { |k, v| set_flags(k, v)}
+floats.each { |k, v| set_flags(k, v, "float")}
 
 primitive = unsigned.merge(negative, simples, floats) # .sort
 
@@ -407,12 +408,14 @@ end
 strings = Hash[[2, 3].flat_map do |mt|
                  (0...100).flat_map {
                    val = if mt == 2
+                           desc = "byte string"
                            gen_bytes(bytes_lengths)
                          else
+                           desc = "text string"
                            gen_words(bytes_lengths)
                          end
                    enc_short = val.to_cbor
-                   [[enc_short.hexi, {value: val, ic: Set[]}]] # Add indef; add non-PS
+                   [[enc_short.hexi, {value: val, ic: Set[], description: desc}]]
        }
 end]
 
@@ -423,6 +426,7 @@ loop do
   add = Hash[
     strings.map do |hexenc, attr|
       val = attr[:value]
+      desc = attr[:description].split[-2..-1].join(" ") # just byte/text string
       set_flags(hexenc, attr)
       # add.concat
       w = widen_arg(hexenc) do |cb, pos, ib, mt, h|
@@ -438,7 +442,7 @@ loop do
       end
       if w != nil
         new_c = [w, {value: val}]
-        set_flags(*new_c)
+        set_flags(*new_c, val.cbor_stream? ? "streaming #{desc}" : "widened #{desc}")
         new_c
       end
     end.compact].reject {|k, _| strings.key?(k)}
@@ -469,7 +473,7 @@ samples.each do |n|
   k = a.to_cbor.hexi
   v = {value: a}
   unless arrays.key?(k)
-    set_flags(k, v)
+    set_flags(k, v, "array")
     arrays[k] = v
   end
 end
@@ -477,8 +481,10 @@ end
 loop do
   add = Hash[
     arrays.map do |hexenc, attr|
+      desc = "widened array"
       val = attr[:value]
       w = widen_arg(hexenc) do |cb, pos, ib, mt, h|
+        desc = "streaming array"
         val = CBOR.decode(hexenc.xeh)
         val.cbor_stream!
         h.clear               # wholesale replacement
@@ -486,7 +492,7 @@ loop do
       end
       if w != nil
         new_c = [w, {value: val}]
-        set_flags(*new_c)
+        set_flags(*new_c, desc)
         new_c
       end
     end.compact].reject {|k, _| arrays.key?(k)}
@@ -534,7 +540,7 @@ samples.each do |n|
   k = a.to_cbor.hexi
   v = {value: a}
   unless maps.key?(k)
-    set_flags(k, v)
+    set_flags(k, v, "map")
     maps[k] = v
   end
 end
@@ -542,7 +548,9 @@ end
 loop do
   add = Hash[
     maps.map do |hexenc, attr|
+      desc = "widened map"
       w = widen_arg(hexenc) do |cb, pos, ib, mt, h|
+        desc = "streaming map"
         val = CBOR.decode(hexenc.xeh)
         val.cbor_stream!
         h.clear               # wholesale replacement
@@ -550,7 +558,7 @@ loop do
       end
       if w != nil
         new_c = [w, {value: attr[:value]}]
-        set_flags(*new_c)
+        set_flags(*new_c, desc)
         new_c
       end
     end.compact].reject {|k, _| maps.key?(k)}
@@ -572,13 +580,13 @@ in :csv
     quote_empty:        false,
   }
 
-  headers = ["CBOR", "value", "attributes"]
+  headers = ["CBOR", "value", "attributes", "description"]
   output = CSV.generate('', headers: headers, write_headers: true, **MY_CSV_OPTIONS) do |csv|
     to_out.each do |k, v|
       val = v[:value]
       val = val.cbor_prepare_dlo unless $options.more_diag
       k = prettier(k) if $options.more_pretty
-      csv << [k, val.cbor_diagnostic, v[:ic].join("/")]
+      csv << [k, val.cbor_diagnostic, v[:ic].join("/"), v[:description]]
     end
   end
 
