@@ -460,11 +460,16 @@ samples = nrand(25, 5, [0, 1, 23, 24, 25])
 arrays = {}
 samples.each do |n|
   totalsize = 0
+  descriptions = Set[]
   a = (0...n).map do |i|
     el = if Random.rand(2) == 0 && arrays != {} && totalsize < 1000
-           arrays.keys.sample
+           k = arrays.keys.sample
+           descriptions << arrays[k][:description]
+           k
          else
-           to_out.sample[0]
+           k, v = to_out.sample
+           descriptions << v[:description]
+           k
          end
     totalsize += el.size
     val = CBOR.decode(el.xeh)
@@ -473,7 +478,7 @@ samples.each do |n|
   k = a.to_cbor.hexi
   v = {value: a}
   unless arrays.key?(k)
-    set_flags(k, v, "array")
+    set_flags(k, v, "array (#{descriptions.join("/")})")
     arrays[k] = v
   end
 end
@@ -513,34 +518,43 @@ samples = nrand(10, 5, [0, 1, 23, 24, 25])
 maps = {}
 samples.each do |n|
   totalsize = 0
+  descs = [Set[], Set[]]        # k, v
   a = Hash[(0...n).map do |i|
              r = Random.rand(5)
-             el = [0, 1].map {
+             el = [0, 1].map { |n|
                if r < 3 && maps != {} && totalsize < 1000
                  ret = maps.keys.sample
                  ret = maps.keys.sample if ret.size > 1000
+                 descs[n] << maps[ret][:description]
                  ret
                elsif r == 3 && totalsize < 1000
-                 arrays.keys.sample
+                 k = arrays.keys.sample
+                 descs[n] << arrays[k][:description]
+                 k
                else
-                 to_out.sample[0]
+                 k, v = to_out.sample
+                 descs[n] << v[:description]
+                 k
                end
              }
              totalsize += el.map {|x| x.bytesize}.sum
              val = el.map {|e| CBOR.decode(e.xeh)}
              val
            end]
+  descadd = ""
   case Random.rand(4)
   in 0
-    a = a.cbor_prepare_deterministic
+    descadd = "CDE "
+    a = a.cbor_prepare_deterministic # fix descs
   in 1
-    a = a.cbor_pre_canonicalize
+    descadd = "LDE "
+    a = a.cbor_pre_canonicalize # fix descs
   else
   end
   k = a.to_cbor.hexi
   v = {value: a}
   unless maps.key?(k)
-    set_flags(k, v, "map")
+    set_flags(k, v, "#{descadd}map (#{descs[0].join("/")}) -> (#{descs[1].join("/")}))")
     maps[k] = v
   end
 end
