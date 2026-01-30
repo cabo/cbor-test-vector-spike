@@ -1,5 +1,5 @@
 require 'pp'
-require 'cbor-pure'
+require 'cbor-pretty' # includes require 'cbor-pure'
 require 'cbor-deterministic'
 require 'cbor-canonical'
 require 'cbor-packed'           # for cbor_visit
@@ -25,6 +25,24 @@ class Integer
   end
 end
 
+def minimizebytes(s)            # XXX needs TLC
+  sz = 1
+  s.each_line.map {|ln| ln.sub(/\s*#.*/, '')}.join.scan(/([0-9a-fA-F][0-9a-fA-F])|(\s+)/).map {|b, c|
+    b or if c[0] == "\n"
+           osz = sz
+           sz = c.size
+           ")-("[(sz <=> osz) + 1] * ((osz-sz)/3).abs +
+             ((sz > 1 && osz >= sz) ? "-" : "")
+         else
+           "."
+         end
+         }.join
+end
+
+def prettier(s)
+  minimizebytes(CBOR::pretty(s.xeh))
+end
+
 ## -- DLO check
 
 def dlo?(o)
@@ -47,15 +65,77 @@ fail unless dlo?(CBOR.decode("60".xeh))
 fail if dlo?(CBOR.decode("817F6130623232FF".xeh))
 
 
+module CBOR
+  module DLO
+
+    module Object_DLO_CBOR
+      def cbor_prepare_dlo
+        self
+      end
+      def to_dlo_cbor
+        cbor_prepare_dlo.to_cbor
+      end
+    end
+    Object.send(:include, Object_DLO_CBOR)
+
+    module Array_DLO_CBOR
+      def cbor_prepare_dlo
+        map(&:cbor_prepare_dlo)
+      end
+    end
+    Array.send(:include, Array_DLO_CBOR)
+
+    module Hash_DLO_CBOR
+      def cbor_prepare_dlo
+        Hash[map {|k, v|
+               [k.cbor_prepare_dlo, v.cbor_prepare_dlo]}]
+      end
+    end
+    Hash.send(:include, Hash_DLO_CBOR)
+
+    module String_DLO_CBOR
+      def cbor_prepare_dlo
+        dup.cbor_stream!(nil)
+      end
+    end
+    String.send(:include, String_DLO_CBOR)
+
+    module Tagged_DLO_CBOR
+      def cbor_prepare_dlo
+        CBOR::Tagged.new(tag, value.cbor_prepare_dlo)
+      end
+    end
+    CBOR::Tagged.send(:include, Tagged_DLO_CBOR)
+  end
+end
+
+[1, 2, 3, {a: 1, b: 2},
+ CBOR.decode("80".xeh),
+ CBOR.decode("9F80FF".xeh),
+ CBOR.decode("A18001".xeh),
+ CBOR.decode("A1BF8001FF60".xeh),
+ CBOR.decode("60".xeh),
+ CBOR.decode("817F6130623232FF".xeh),
+].each do |item|
+  pd = item.cbor_prepare_dlo
+  fail unless item == pd
+  fail unless dlo?(pd)
+end
+
+
 def set_flags(hexenc, attr)
   cb = hexenc.xeh
   cd = CBOR.decode(cb)
+  cdd = cd.to_deterministic_cbor
   val = attr[:value]
-  fail [hexenc, attr].inspect if cd != attr[:value] && cd == cd # not a NaN...
+  vald = val.to_deterministic_cbor
+  if cdd != vald
+    fail [hexenc, cd, attr, cdd.hexi, vald.hexi].inspect
+  end
   attr[:ic] = Set[]
   attr[:ic] << :DLO if dlo?(cd)
-  attr[:ic] << :PS if val.to_cbor == cb # XXX
-  attr[:ic] << :CDE if val.to_deterministic_cbor == cb
+  attr[:ic] << :PS if cd.to_cbor == cb
+  attr[:ic] << :CDE if vald == cb
   attr[:ic] << :LDE if val.to_canonical_cbor == cb
 end
 
@@ -83,6 +163,12 @@ begin
 
     opts.on("-v", "--[no-]verbose", "Run verbosely") do |v|
       $options.verbose = v
+    end
+    opts.on("-d", "--[no-]more-diagnostic", "Use more detailed EDN") do |v|
+      $options.more_diag = v
+    end
+    opts.on("-p", "--[no-]more-pretty", "Use more detailed hex format") do |v|
+      $options.more_pretty = v
     end
     opts.on("-sSEED", "--seed=SEED", Integer,
             "Random number generator seed") do |v|
@@ -150,7 +236,7 @@ def widen_arg(hexenc, pos = 0)
           hexenc[hpos + 2, arg_length * 2]
         end
   mt = ib >> 5
-  initial_nibble = ("1".ord + 2*mt).chr
+  initial_nibble = "%x" % (2*mt+1)
   case arg_length
   in 0
     h[hpos, 2] = initial_nibble + "8" + arg
@@ -191,7 +277,6 @@ def widen_int(hexenc, attr)
 end
 
 [unsigned, negative].each do |cases|
-#  pp [:CASES, cases]
   loop do
     add = Hash[
     cases.map do |c|
@@ -203,7 +288,6 @@ end
         w
       end
     end.compact].reject {|k, _| cases.key?(k)}
-#    pp [:ADD, add]
     break if add == {}
     cases.merge! add
   end
@@ -300,8 +384,6 @@ def gen_word
 end
 
 bytes_lengths = nrand(15, 5, nrand(10, 9, [0, 1, 2, 23, 24, 255, 256, 257]))
-# pp bytes_lengths
-# pp bytes_lengths.sample
 
 def gen_bytes(bl)
   l = bl.sample
@@ -340,6 +422,7 @@ indef_stringvals = Set[]        # only do one indef per val
 loop do
   add = Hash[
     strings.map do |hexenc, attr|
+      val = attr[:value]
       set_flags(hexenc, attr)
       # add.concat
       w = widen_arg(hexenc) do |cb, pos, ib, mt, h|
@@ -354,7 +437,7 @@ loop do
         end
       end
       if w != nil
-        new_c = [w, {value: attr[:value]}]
+        new_c = [w, {value: val}]
         set_flags(*new_c)
         new_c
       end
@@ -366,6 +449,120 @@ end
 
 to_out = primitive.merge(strings).sort
 
+# Arrays
+
+samples = nrand(25, 5, [0, 1, 23, 24, 25])
+
+arrays = {}
+samples.each do |n|
+  totalsize = 0
+  a = (0...n).map do |i|
+    el = if Random.rand(2) == 0 && arrays != {} && totalsize < 1000
+           arrays.keys.sample
+         else
+           to_out.sample[0]
+         end
+    totalsize += el.size
+    val = CBOR.decode(el.xeh)
+    val
+  end
+  k = a.to_cbor.hexi
+  v = {value: a}
+  unless arrays.key?(k)
+    set_flags(k, v)
+    arrays[k] = v
+  end
+end
+
+loop do
+  add = Hash[
+    arrays.map do |hexenc, attr|
+      val = attr[:value]
+      w = widen_arg(hexenc) do |cb, pos, ib, mt, h|
+        val = CBOR.decode(hexenc.xeh)
+        val.cbor_stream!
+        h.clear               # wholesale replacement
+        val.to_cbor.hexi
+      end
+      if w != nil
+        new_c = [w, {value: val}]
+        set_flags(*new_c)
+        new_c
+      end
+    end.compact].reject {|k, _| arrays.key?(k)}
+  break if add == {}
+  arrays.merge! add
+end
+
+
+to_out.concat arrays.to_a
+
+# Build examples, widen them, add to to_out
+
+# --- Maps
+
+samples = nrand(10, 5, [0, 1, 23, 24, 25])
+
+
+maps = {}
+samples.each do |n|
+  totalsize = 0
+  a = Hash[(0...n).map do |i|
+             r = Random.rand(5)
+             el = [0, 1].map {
+               if r < 3 && maps != {} && totalsize < 1000
+                 ret = maps.keys.sample
+                 ret = maps.keys.sample if ret.size > 1000
+                 ret
+               elsif r == 3 && totalsize < 1000
+                 arrays.keys.sample
+               else
+                 to_out.sample[0]
+               end
+             }
+             totalsize += el.map {|x| x.bytesize}.sum
+             val = el.map {|e| CBOR.decode(e.xeh)}
+             val
+           end]
+  case Random.rand(4)
+  in 0
+    a = a.cbor_prepare_deterministic
+  in 1
+    a = a.cbor_pre_canonicalize
+  else
+  end
+  k = a.to_cbor.hexi
+  v = {value: a}
+  unless maps.key?(k)
+    set_flags(k, v)
+    maps[k] = v
+  end
+end
+
+loop do
+  add = Hash[
+    maps.map do |hexenc, attr|
+      w = widen_arg(hexenc) do |cb, pos, ib, mt, h|
+        val = CBOR.decode(hexenc.xeh)
+        val.cbor_stream!
+        h.clear               # wholesale replacement
+        val.to_cbor.hexi
+      end
+      if w != nil
+        new_c = [w, {value: attr[:value]}]
+        set_flags(*new_c)
+        new_c
+      end
+    end.compact].reject {|k, _| maps.key?(k)}
+  break if add == {}
+  maps.merge! add
+end
+
+to_out.concat maps.to_a
+
+# --- put everything together
+
+to_out.sort!
 case $options.target
 in :csv
 
@@ -378,7 +575,10 @@ in :csv
   headers = ["CBOR", "value", "attributes"]
   output = CSV.generate('', headers: headers, write_headers: true, **MY_CSV_OPTIONS) do |csv|
     to_out.each do |k, v|
-      csv << [k, v[:value].cbor_diagnostic, v[:ic].join("/")]
+      val = v[:value]
+      val = val.cbor_prepare_dlo unless $options.more_diag
+      k = prettier(k) if $options.more_pretty
+      csv << [k, val.cbor_diagnostic, v[:ic].join("/")]
     end
   end
 
