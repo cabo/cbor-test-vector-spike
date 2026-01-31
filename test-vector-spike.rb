@@ -5,6 +5,7 @@ require 'cbor-canonical'
 require 'cbor-packed'           # for cbor_visit
 require 'csv'
 require 'edn-abnf'
+require 'iana-registry'
 
 ## -- manipulating hex strings
 
@@ -298,8 +299,6 @@ end
 
 # pp negative
 
-## -- Tags
-
 ## -- Simples
 
 arguments = nrand(10, 8, [20, 21, 22, 23, 32, 33, 255]).select {(0..23) === _1 || (32..255) === _1}
@@ -585,6 +584,47 @@ loop do
 end
 
 to_out.concat maps.to_a
+
+
+## -- Tags
+
+
+reg = IANA::Registry::CBOR_TAGS.new
+
+arguments = (nrand(10, 1) + nrand(20, 64, boundary(24, 1, 2, 4))).reject { reg.find(_1)} # Don't use registered tags
+
+tags = {}
+arguments.each do |arg|
+  content = to_out.sample
+  desc = "tag with #{content[1][:description]}"
+  cb = arg.to_cbor.hexi
+  cb[0] = "cd"[cb[0].to_i]
+  cb << content[0]
+  attr = {value: CBOR::Tagged.new(arg, content[1][:value])}
+  set_flags(cb, attr, desc)
+  tags[cb] = attr
+end
+
+
+loop do
+  add = Hash[
+    tags.map do |hexenc, attr|
+      desc = "widened #{attr[:description].sub(/widened tag/, "tag")}"
+      val = attr[:value]
+      w = widen_arg(hexenc) do
+        # No streaming for tags
+      end
+      if w != nil
+        new_c = [w, {value: val}]
+        set_flags(*new_c, desc)
+        new_c
+      end
+    end.compact].reject {|k, _| tags.key?(k)}
+  break if add == {}
+  tags.merge! add
+end
+
+to_out.concat tags.to_a
 
 # --- put everything together
 
