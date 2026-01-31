@@ -367,7 +367,11 @@ floats = Hash[[23, 10].flat_map do |expobits|
 end]
 
 floats.merge!(binary64)
-floats.each { |k, v| set_flags(k, v, "float")}
+floats.each { |k, v|
+  CBOR.decode(k.xeh).to_cbor.hexi
+  desc = "#{CBOR.decode(k.xeh).to_cbor.hexi != k ? "widened " : ""}float"
+  set_flags(k, v, desc)
+}
 
 primitive = unsigned.merge(negative, simples, floats) # .sort
 
