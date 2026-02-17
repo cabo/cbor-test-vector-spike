@@ -3,7 +3,6 @@ require 'cbor-pretty' # includes require 'cbor-pure'
 require 'cbor-deterministic'
 require 'cbor-canonical'
 require 'cbor-packed'           # for cbor_visit
-require 'csv'
 require 'edn-abnf'
 require 'iana-registry'
 require_relative 'test-vector-cbor-dlo'
@@ -85,7 +84,7 @@ $options.target = output_formats[0]
 
 begin
   op = OptionParser.new do |opts|
-    opts.banner = "Usage: $0 [options]"
+    opts.banner = "Usage: #{$PROGRAM_NAME} [options]"
 
     opts.on("-v", "--[no-]verbose", "Run verbosely") do |v|
       $options.verbose = v
@@ -553,17 +552,13 @@ to_out.concat tags.to_a
 # --- put everything together
 
 to_out.sort!
+
 case $options.target
 in :csv
 
-  MY_CSV_OPTIONS = {
-    col_sep:            ";",
-    quote_char:         '|',
-    quote_empty:        false,
-  }
+  require_relative "./test-vector-csv"
 
-  headers = ["CBOR", "value", "attributes", "description"]
-  output = CSV.generate('', headers: headers, write_headers: true, **MY_CSV_OPTIONS) do |csv|
+  output = CSV.generate('', **TEST_VECTOR_CSV_OPTIONS) do |csv|
     to_out.each do |k, v|
       val = v[:value]
       val = val.cbor_prepare_dlo unless $options.more_diag
