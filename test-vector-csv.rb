@@ -1,5 +1,6 @@
 #!/usr/bin/env ruby -Ku
 require 'csv'
+require 'cbor-diagnostic'
 
 TEST_VECTOR_CSV_OPTIONS = {
   col_sep:            ';',
@@ -44,7 +45,7 @@ if __FILE__ == $PROGRAM_NAME
         $options.verbose = v
       end
       opts.on("-tFMT", "--to=FMT", output_formats,
-              "Target format (#{output_formats.join("/")}, default: #{$options.target})") do |v|
+              "Target format (#{output_formats.join("|")}, default: #{$options.target})") do |v|
         $options.target = v.to_sym
       end
     end
@@ -59,37 +60,37 @@ if __FILE__ == $PROGRAM_NAME
   data = CSV.parse(ARGF.read, **TEST_VECTOR_CSV_OPTIONS)
 
   tests = data.map do |row|
-    flags = row[:attributes]&.split("/")
-    r = if @options.target = :json
+    flags = row[:attributes]&.split("/") || []
+    r = if $options.target == :json
           {
-            encoded_hex: row[:cbor],      # .xeh
-            decoded_edn: row[:value],     # needs to be EDN-parsed
+            "encoded_hex" => row[:CBOR],      # .xeh
+            "decoded_edn" => row[:value],     # needs to be EDN-parsed
           }
         else
-          bin = row[:cbor].xeh,
+          bin = row[:CBOR].xeh
           {
-            encoded: bin,
-            decoded: CBOR.decode(bin).to_dlo_cbor
+            "encoded" => bin,
+            "decoded" => CBOR.decode(bin).cbor_prepare_dlo
           }
         end
     r.merge!({
-      description: row[:description],
-      flags: flags,
+      "description" => row[:description],
+      "flags" => flags,
     })
     unless flags&.include?("PS") && flags&.include?("DLO")
-      r[:roundtrip] = false
+      r["roundtrip"] = false
     end
     r
   end
 
-  out = {title: "good fuzz",
-         description: "Good tests from fuzzing RFC 8949",
-         tests: tests}
+  out = {"title" => "good fuzz",
+         "description" => "Good tests from fuzzing RFC 8949",
+         "tests" => tests}
 
-  out_text = if @options.target = :json
+  out_text = if $options.target == :json
                JSON.pretty_generate(out)
-             else
-               
+             else # :edn
+               out.cbor_diagnostic
              end
   puts out_text
 end
