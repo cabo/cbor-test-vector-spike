@@ -12,6 +12,7 @@ test-vector-spike.json: test-vector-csv.rb test-vector-spike.csv Makefile
 
 test-vector-spike.csv: test-vector-spike.rb Makefile
 	ruby $< -s 47110815 > $@
+	ruby test-vector-csv.rb -tcheck $@
 	wc -cl $@
 
 test-vector-diag.csv: test-vector-spike.rb Makefile

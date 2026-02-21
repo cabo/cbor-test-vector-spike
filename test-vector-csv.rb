@@ -32,7 +32,7 @@ if __FILE__ == $PROGRAM_NAME
 
   $error = 0
 
-  output_formats = [:edn, :json, :cbor]
+  output_formats = [:edn, :json, :cbor, :check]
 
   $options = OpenStruct.new
   $options.target = output_formats[0]
@@ -99,5 +99,13 @@ if __FILE__ == $PROGRAM_NAME
   in :cbor
     $stdout.binmode
     $stdout.write(out.to_cbor)
+  in :check
+    out["tests"].each do |t|
+      unless t["roundtrip"] == false
+        if t["decoded"].to_cbor != t["encoded"]
+          warn "** #{t.inspect}"
+        end
+      end
+    end
   end
 end
