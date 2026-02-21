@@ -32,7 +32,7 @@ if __FILE__ == $PROGRAM_NAME
 
   $error = 0
 
-  output_formats = [:edn, :json]
+  output_formats = [:edn, :json, :cbor]
 
   $options = OpenStruct.new
   $options.target = output_formats[0]
@@ -47,6 +47,10 @@ if __FILE__ == $PROGRAM_NAME
       opts.on("-tFMT", "--to=FMT", output_formats,
               "Target format (#{output_formats.join("|")}, default: #{$options.target})") do |v|
         $options.target = v.to_sym
+      end
+      opts.on("-wCOL", "--wrap=COL", Integer,
+              "EDN: wrap at column COL") do |v|
+        $options.wrap = v
       end
     end
     op.parse!
@@ -87,10 +91,13 @@ if __FILE__ == $PROGRAM_NAME
          "description" => "Good tests from fuzzing RFC 8949",
          "tests" => tests}
 
-  out_text = if $options.target == :json
-               JSON.pretty_generate(out)
-             else # :edn
-               out.cbor_diagnostic
-             end
-  puts out_text
+  case $options.target
+  in :json
+    puts JSON.pretty_generate(out)
+  in :edn
+    puts out.cbor_diagnostic(wrap: $options.wrap)
+  in :cbor
+    $stdout.binmode
+    $stdout.write(out.to_cbor)
+  end
 end
